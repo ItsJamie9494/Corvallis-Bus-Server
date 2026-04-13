@@ -5,6 +5,7 @@
     <LangVersion>preview</LangVersion>
     <Nullable>enable</Nullable>
     <UserSecretsId>1c619b31-3e09-4121-9024-6750b5aa9005</UserSecretsId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +15,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Sendgrid" Version="9.12.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.1.7" />
   </ItemGroup>
 
   <ItemGroup>

@@ -3,7 +3,9 @@ using System.Threading.Tasks;
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using CorvallisBus.Core.DataAccess;
 using CorvallisBus.Core.WebClients;
 using CorvallisBus.Core.Models;
@@ -37,65 +39,62 @@ namespace CorvallisBus.Controllers
         }
 
         /// <summary>
-        /// Redirects the user to the GitHub repo where this API is documented.
+        /// Redirects the user to the Swagger API descriptions
         /// </summary>
         [HttpGet]
+        [ApiExplorerSettings(IgnoreApi = true)]
         public ActionResult Index()
         {
-            return View();
+            return Redirect("/swagger/");
         }
 
+        /// <summary>
+        /// Gets static CTS system data (routes and stops).
+        /// </summary>
+        /// <remarks>
+        /// Gets static CTS system data (routes and stops). This contains all the useful metadata about routes and stops except for the schedule itself.
+        /// 
+        /// This data should be considered accurate for 24 hours. Caching it on the client side is encouraged.
+        /// </remarks>
+        /// <response code="200">The CTS route and stop data.</response>
         [HttpGet("static")]
+        [Produces("application/json")]
+        [ProducesResponseType<BusStaticData>(200)]
+        [Tags(["CTS"])]
         public ActionResult GetStaticData()
         {
             return PhysicalFile(_repository.StaticDataPath, "application/json");
         }
 
-        [HttpGet("swagger.yaml")]
-        public ActionResult GetSwagger()
-        {
-            return PhysicalFile(Path.Join(_webRootPath, "swagger.yaml"), "application/yaml");
-        }
-
-        public List<int> ParseStopIds(string stopIds)
-        {
-            if (string.IsNullOrWhiteSpace(stopIds))
-            {
-                return new List<int>();
-            }
-
-            // ToList() this to force any parsing exception to happen here,
-            // rather than later, because I'm lazy and don't wanna reason my way
-            // through deferred execution and exception-handling.
-            return stopIds.Split(',').Select(int.Parse).ToList();
-        }
-
         /// <summary>
-        /// As the name suggests, this gets the ETA information for any number of stop IDs.  The data
-        /// is represented as a dictionary, where the keys are the given stop IDs and the values are dictionaries.
-        /// These nested dictionaries have route numbers as the keys and integers (ETA) as the values.
+        /// Gets the ETA information for any number of stop IDs.
         /// </summary>
-        [HttpGet("eta/{stopIds}")]
-        public async Task<ActionResult> GetETAs(string stopIds)
+        /// <remarks>
+        /// Returns a JSON dictionary, where the keys are the supplied stop IDs, and the values are dictionaries.
+        /// 
+        /// These nested dictionaries are such that the keys are route numbers, and the values are lists of integers corresponding to the ETAs for that route to that stop.
+        /// 
+        /// For example, `"6": [1, 21]` means that Route 6 is arriving at the given stop in 1 minute, and again in 21 minutes. ETAs are limited to 30 minutes in the future by the city.
+        /// </remarks>
+        /// <param name="stopIds" type="array">Stop IDs to get ETAs for</param>
+        /// <response code="200">The stop ETAs.</response>
+        /// <response code="400">An error occured validating the Stop IDs</response>
+        [HttpGet("eta")]
+        [Produces("application/json")]
+        [ProducesResponseType<Dictionary<int, Dictionary<string, List<int>>>>(200)] // FIXME: this should be a better type
+        [ProducesResponseType(400)]
+        [ProducesResponseType(500)]
+        [Tags(["CTS"])]
+        public async Task<ActionResult> GetETAs([FromQuery, BindRequired]List<int> stopIds)
         {
-            List<int> parsedStopIds;
-            try
-            {
-                parsedStopIds = ParseStopIds(stopIds);
-            }
-            catch (FormatException)
-            {
-                return StatusCode(400);
-            }
-
-            if (parsedStopIds == null || parsedStopIds.Count == 0)
+            if (stopIds == null || stopIds.Count == 0)
             {
                 return StatusCode(400);
             }
 
             try
             {
-                var etas = await TransitManager.GetEtas(_repository, _client, parsedStopIds);
+                var etas = await TransitManager.GetEtas(_repository, _client, stopIds);
                 var etasJson = JsonConvert.SerializeObject(etas);
                 return Content(etasJson, "application/json");
             }
@@ -106,50 +105,38 @@ namespace CorvallisBus.Controllers
         }
 
         /// <summary>
-        /// Generates a new LatLong based on input.  Throws an exception if it can't do it.
+        /// Gets the schedule that CTS routes adhere to for a set of stops.
         /// </summary>
-        private static LatLong? ParseUserLocation(string location)
+        /// <remarks>
+        /// Returns an interleaved list of arrival times for each route for each stop ID provided. Most of the stops in the Corvallis Transit System don't have a schedule. This app fabricates schedules for them by interpolating between those stops that have a schedule. The time between two officially scheduled stops is divided by the number of unscheduled stops between them. This turns out to be a reasonably accurate method.
+        ///
+        /// Since buses can run behind by 15 minutes or more, or have runs cancelled outright, some interpretation is necessary to communicate the schedule and the estimates in the most informative way possible for users.
+        /// 
+        /// For instance, in the case of a bus running late, scheduled arrival times can be shown only at least 20 minutes in advance. If they instead were shown only at least 30 minutes in advance, there would be gaps in time where a bus's likely arrival wouldn't be apparent to the user. In other words, the API allows the schedule a 10-minute grace period to "pass" as an estimate, but when the city starts putting out an estimate for that same bus's arrival, the scheduled time gets replaced by the estimated time.
+        /// 
+        /// Returns a JSON dictionary where the keys are Stop IDs and the values are dictionaries of `{ routeNo: schedule }`. The schedule is a list of pairs of a boolean "is an estimate" and integer "minutes from now." Integers are used because ETAs are interleaved with scheduled arrival times. This avoids a problem where an ETA appears to go up by a minute at the same time the minute on the system clock increments. It introduces a problem where the scheduled times vary by a minute if the server has a different minute value at the time it creates the payload than the client has at the time it consumes the payload.
+        /// 
+        /// For the time being, it's recommended to use the endpoints which interpret these times and produce user-friendly descriptions for you, such as `/arrivals-summary`.
+        /// </remarks>
+        /// <param name="stopIds" type="array">Stop IDs to get schedules for</param>
+        /// <response code="200">A nested dictionary which groups the arrival times first by stop, then by route name.</response>
+        /// <response code="400">An error occured validating the Stop IDs</response>
+        [HttpGet("schedule")]
+        [Produces("application/json")]
+        [ProducesResponseType<Dictionary<int, Dictionary<string, List<BusArrivalTime>>>>(200)] // FIXME: better type
+        [ProducesResponseType(400)]
+        [ProducesResponseType(500)]
+        [Tags(["CTS"])]
+        public async Task<ActionResult> GetSchedule([FromQuery, BindRequired]List<int> stopIds)
         {
-            if (string.IsNullOrWhiteSpace(location))
-            {
-                return null;
-            }
-
-            var locationPieces = location.Split(',');
-            if (locationPieces.Length != 2)
-            {
-                throw new FormatException("2 comma-separated numbers must be provided in the location string.");
-            }
-
-            return new LatLong(double.Parse(locationPieces[0]),
-                               double.Parse(locationPieces[1]));
-        }
-
-        /// <summary>
-        /// Exposes the schedule that CTS routes adhere to for a set of stops.
-        /// </summary>
-        [HttpGet("schedule/{stopIds}")]
-        public async Task<ActionResult> GetSchedule(string stopIds)
-        {
-            List<int> parsedStopIds;
-
-            try
-            {
-                parsedStopIds = ParseStopIds(stopIds);
-            }
-            catch (FormatException)
-            {
-                return StatusCode(400);
-            }
-
-            if (parsedStopIds == null || parsedStopIds.Count == 0)
+            if (stopIds == null || stopIds.Count == 0)
             {
                 return StatusCode(400);
             }
 
             try
             {
-                var todaySchedule = await TransitManager.GetSchedule(_repository, _client, _getCurrentTime(), parsedStopIds);
+                var todaySchedule = await TransitManager.GetSchedule(_repository, _client, _getCurrentTime(), stopIds);
                 var todayScheduleJson = JsonConvert.SerializeObject(todaySchedule);
                 return Content(todayScheduleJson, "application/json");
             }
@@ -159,28 +146,33 @@ namespace CorvallisBus.Controllers
             }
         }
 
-        [HttpGet("arrivals-summary/{stopIds}")]
-        public async Task<ActionResult> GetArrivalsSummary(string stopIds)
+        /// <summary>
+        /// Gets an arrivals summary for the given stop IDs.
+        /// </summary>
+        /// <remarks>
+        /// Gets an arrivals summary for the given stop IDs. The list of route arrivals for a stop will be ordered by the soonest arrival time.
+        /// 
+        /// The server tries to determine if each route arrives at a given stop "pretty much" hourly or half-hourly. Most routes arrive hourly, with a 10-minute break in the middle of the day. Thus if all the scheduled times left in the day are between 50-70 minutes from each other, it's considered to be an hourly schedule. Similarly with all being 20-40 minutes apart to be considered half-hourly.
+        /// </remarks>
+        /// <param name="stopIds" type="array">Stop IDs to get arrivals summary for</param>
+        /// <response code="200">A dictionary with the stop IDs as the key and the summaries array as the value.</response>
+        /// <response code="400">An error occured validating the Stop IDs</response>
+        [HttpGet("arrivals-summary")]
+        [Produces("application/json")]
+        [ProducesResponseType<Dictionary<int, List<RouteArrivalsSummary>>>(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(500)]
+        [Tags(["CTS"])]
+        public async Task<ActionResult> GetArrivalsSummary([FromQuery, BindRequired]List<int> stopIds)
         {
-            List<int> parsedStopIds;
-
-            try
-            {
-                parsedStopIds = ParseStopIds(stopIds);
-            }
-            catch (FormatException)
-            {
-                return StatusCode(400);
-            }
-
-            if (parsedStopIds == null || parsedStopIds.Count == 0)
+            if (stopIds == null || stopIds.Count == 0)
             {
                 return StatusCode(400);
             }
 
             try
             {
-                var arrivalsSummary = await TransitManager.GetArrivalsSummary(_repository, _client, _getCurrentTime(), parsedStopIds);
+                var arrivalsSummary = await TransitManager.GetArrivalsSummary(_repository, _client, _getCurrentTime(), stopIds);
                 var arrivalsSummaryJson = JsonConvert.SerializeObject(arrivalsSummary);
                 return Content(arrivalsSummaryJson, "application/json");
             }
@@ -190,7 +182,13 @@ namespace CorvallisBus.Controllers
             }
         }
 
+        /// <summary>
+        /// Redirects to the official CTS service alerts page.
+        /// </summary>
+        /// <response code="302">Redirects to the service alerts page.</response>
         [HttpGet("service-alerts")]
+        [ProducesResponseType(302)]
+        [Tags(["CTS"])]
         public ActionResult GetServiceAlertsWebsite()
         {
             return Redirect("https://www.corvallisoregon.gov/news?field_microsite_tid=581");
@@ -200,6 +198,7 @@ namespace CorvallisBus.Controllers
         /// Performs a first-time setup and import of static data.
         /// </summary>
         [HttpPost("job/init")]
+        [ApiExplorerSettings(IgnoreApi = true)] // Private API
         public ActionResult Init()
         {
             var expectedAuth = Environment.GetEnvironmentVariable("CorvallisBusAuthorization");
