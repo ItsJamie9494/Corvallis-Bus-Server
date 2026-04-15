@@ -47,7 +47,7 @@ public class RoutePositionPlatformRoute
 public class RoutePositionContent
 {
     [XmlAttribute]
-    public required DateTime Expires { get; init; }
+    public required DateTimeOffset Expires { get; init; }
 
     [XmlAttribute]
     public required int MaxArrivalScope { get; init; }

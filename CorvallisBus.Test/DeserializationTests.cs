@@ -28,7 +28,7 @@ public class MyTests
         Assert.Equal(2, items.Length);
 
         var content = (RoutePositionContent)items[0];
-        Assert.Equal("04/08/2023 16:23:31", content.Expires.ToString(CultureInfo.InvariantCulture));
+        Assert.Equal("04/08/2023 16:23:31 -07:00", content.Expires.ToString(CultureInfo.InvariantCulture));
         Assert.Equal(60, content.MaxArrivalScope);
 
         var platform = (RoutePositionPlatform)items[1];
