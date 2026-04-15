@@ -64,7 +64,7 @@ namespace CorvallisBus.Core.Models
             else
             {
                 var arrivalTime = currentTime.AddMinutes(minutes);
-                return arrivalTime.ToString(DATE_FORMAT);
+                return arrivalTime.ToString(DATE_FORMAT).ToUpper();
             }
         }
 
@@ -76,7 +76,7 @@ namespace CorvallisBus.Core.Models
             }
 
             var lastTime = currentTime.AddMinutes(arrivals.Last().MinutesFromNow);
-            var lastTimeDescription = lastTime.ToString(DATE_FORMAT);
+            var lastTimeDescription = lastTime.ToString(DATE_FORMAT).ToUpper();
 
             if (arrivals.Count == 3)
             {
