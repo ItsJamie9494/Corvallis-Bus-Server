@@ -1,22 +1,20 @@
-## Corvallis Bus Server
+## BeavBus Server
 
-[![Build Status](https://travis-ci.org/RikkiGibson/Corvallis-Bus-Server.svg?branch=NetCore)](https://travis-ci.org/RikkiGibson/Corvallis-Bus-Server)
+![Build Status](https://github.com/OSU-App-Club/BeavBus-Server/actions/workflows/test.yml/badge.svg)
 
-The backend that powers the best apps for the Corvallis Transit System.
-- [iOS client](https://github.com/RikkiGibson/Corvallis-Bus-iOS)
-- [Android client](https://github.com/OSU-App-Club/Corvallis-Bus-Android)
-- [Web client](https://github.com/RikkiGibson/corvallis-bus-web)
+The backend that powers the BeavBus apps' Corvallis Transit System data.
+- [BeavBus](https://github.com/OSU-App-Club/beavbus)
 
 ## Prerequisites for running
 
 The [.NET SDK](https://dotnet.microsoft.com/download) must be installed. The precise version that you should install can be found in [global.json](global.json). Then you can run the following commands in the repo root directory:
 ```sh
-# If you want to run tests
+# Running tests
 $ dotnet test CorvallisBus.Test
 
-# Run the web app
+# Running Web App
 $ cd CorvallisBus.Web
-$ dotnet run
+$ dotnet run --project CorvallisBus.Web
 
 # Run the data init job locally by sending a POST request
 $ curl -d {} localhost:57855/api/job/init
